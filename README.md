@@ -1,16 +1,3 @@
----
-title: API Security RL Environment
-emoji: "\U0001F510"
-colorFrom: red
-colorTo: purple
-sdk: docker
-pinned: false
-app_port: 8000
-base_path: /web
-tags:
-  - openenv
----
-
 # API Security RL Environment
 
 An OpenEnv environment that simulates a **vulnerable REST API** for training AI agents to discover and exploit security vulnerabilities. The agent interacts with a fictional e-commerce API ("SecureShop") by sending HTTP-like requests and receives structured responses with progressive hints and shaped rewards.
