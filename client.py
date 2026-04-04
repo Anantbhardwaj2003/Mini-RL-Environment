@@ -11,7 +11,10 @@ from typing import Any, Dict, List
 from openenv.core import EnvClient
 from openenv.core.client_types import StepResult
 from openenv.core.env_server.types import State
-from .models import ApiSecurityRlAction, ApiSecurityRlObservation
+try:
+    from .models import ApiSecurityRlAction, ApiSecurityRlObservation
+except ImportError:
+    from models import ApiSecurityRlAction, ApiSecurityRlObservation
 
 
 class ApiSecurityRlEnv(
