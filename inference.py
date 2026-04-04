@@ -16,12 +16,12 @@ from client import ApiSecurityRlEnv
 from models import ApiSecurityRlAction
 
 # Environment Variable Configurations
-API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
-MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
-API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+API_BASE_URL = os.getenv("API_BASE_URL")
+MODEL_NAME = os.getenv("MODEL_NAME")
+API_KEY = os.getenv("HF_TOKEN")
 
 # For running locally via Docker image
-IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME") or os.getenv("IMAGE_NAME", "api_security_rl-env:latest")
+IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 
 TASK_NAME = os.getenv("API_SECURITY_TASK", "recon_easy")
 BENCHMARK = "api_security_rl"
@@ -128,7 +128,10 @@ def get_model_action(client: OpenAI, step: int, obs_dict: Dict[str, Any], histor
         return ApiSecurityRlAction(method="GET", endpoint="/")
 
 
-def main() -> None:
+import inspect
+import asyncio
+
+async def main() -> None:
     client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
     # Initialize Environment
@@ -149,6 +152,8 @@ def main() -> None:
 
     try:
         result = env.reset(task_id=TASK_NAME)
+        if inspect.isawaitable(result):
+            result = await result
         
         # Max steps config logic
         task_max_steps = result.observation.max_steps if getattr(result.observation, "max_steps", 0) > 0 else MAX_STEPS
@@ -173,6 +178,8 @@ def main() -> None:
 
             try:
                 result = env.step(action)
+                if inspect.isawaitable(result):
+                    result = await result
                 obs_dict["status_code"] = result.observation.status_code
                 reward = result.reward or 0.0
                 done = result.done
@@ -199,7 +206,9 @@ def main() -> None:
 
     finally:
         try:
-            env.close()
+            close_res = env.close()
+            if inspect.isawaitable(close_res):
+                await close_res
         except Exception as e:
             print(f"[DEBUG] env.close() error (container cleanup): {e}", flush=True)
             
@@ -207,4 +216,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
