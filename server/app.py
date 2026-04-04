@@ -74,11 +74,54 @@ def main(host: str = "0.0.0.0", port: int = 8000):
 
     uvicorn.run(app, host=host, port=port)
 
+import os
+import asyncio
+from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
-# @app.get("/web", response_class=HTMLResponse)
-# def web():
-#     return "<h1>API Security RL is running 🚀</h1>"
+@app.get("/web", response_class=HTMLResponse)
+def web():
+    web_html_path = os.path.join(os.path.dirname(__file__), "web.html")
+    with open(web_html_path, "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
+
+@app.websocket("/inference-stream")
+async def websocket_inference(websocket: WebSocket):
+    await websocket.accept()
+    env = os.environ.copy()
+    env["API_BASE_URL_FOR_ENV"] = "http://127.0.0.1:8000"
+    
+    # Manually load .env from the root directory so the subprocess gets the HF_TOKEN keys
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    if os.path.exists(env_path):
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    # Remove potential surrounding quotes from the value
+                    v = v.strip().strip("'").strip('"')
+                    env[k.strip()] = v
+    
+    script_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "inference.py")
+    
+    process = await asyncio.create_subprocess_exec(
+        "python", script_path,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        env=env
+    )
+    
+    try:
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+            await websocket.send_text(line.decode("utf-8").strip())
+        await process.wait()
+        await websocket.send_text("[PROCESS COMPLETED]")
+    except WebSocketDisconnect:
+        process.terminate()
 
 if __name__ == "__main__":
     import argparse
