@@ -79,7 +79,7 @@ import asyncio
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
-@app.get("/web", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse)
 def web():
     web_html_path = os.path.join(os.path.dirname(__file__), "web.html")
     with open(web_html_path, "r", encoding="utf-8") as f:
