@@ -159,7 +159,7 @@ async def main() -> None:
         task_max_steps = result.observation.max_steps if getattr(result.observation, "max_steps", 0) > 0 else MAX_STEPS
 
         for step in range(1, task_max_steps + 1):
-            if result.done:
+            if result and result.done:
                 break
 
             obs_dict = {
@@ -171,7 +171,7 @@ async def main() -> None:
                 "security_score": result.observation.security_score,
             }
 
-            action = get_model_action(client, step, obs_dict, history)
+            action = await asyncio.to_thread(get_model_action, client, step, obs_dict, history)
             
             # Format action string cleanly for logging without line breaks
             action_str = f"{action.method} {action.endpoint}".replace("\n", " ")
@@ -185,14 +185,19 @@ async def main() -> None:
                 done = result.done
                 error = None
             except Exception as e:
+                result = None
                 reward = 0.0
                 done = False
                 error = str(e).replace("\n", " ")
+                obs_dict["status_code"] = "ERROR"
 
             steps_taken = step
             rewards.append(reward)
-            score = getattr(result.observation, "security_score", 0.0)
-
+            if result and hasattr(result,"observation"):
+                score = getattr(result.observation, "security_score", 0.0)
+            else:
+                score = 0.0
+                
             log_step(step=step, action=action_str, reward=reward, done=done, error=error)
 
             history.append(f"Step {step}: {action_str} -> status {obs_dict['status_code']}, reward {reward:+.2f}")
