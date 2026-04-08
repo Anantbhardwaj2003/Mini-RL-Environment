@@ -109,7 +109,6 @@ def build_user_prompt(step: int, obs_dict: Dict[str, Any], history: List[str]) -
 
 
 def get_model_action(client: OpenAI, step: int, obs_dict: Dict[str, Any], history: List[str]) -> ApiSecurityRlAction:
-    
     # ✅ Fallback if client not available
     if client is None:
         return ApiSecurityRlAction(method="GET", endpoint="/")
@@ -168,9 +167,11 @@ async def main() -> None:
         api_url = os.getenv("API_BASE_URL_FOR_ENV")
         if api_url:
             env = ApiSecurityRlEnv(base_url=api_url)
-        else:
+        elif IMAGE_NAME:
             env = await ApiSecurityRlEnv.from_docker_image(IMAGE_NAME)
-            
+        else:
+            log_end(success=False, steps=0, score=0.0, rewards=[])
+            return
         result = env.reset(task_id=TASK_NAME)
         if inspect.isawaitable(result):
             result = await result
