@@ -134,14 +134,8 @@ import asyncio
 async def main() -> None:
     client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
-    # Initialize Environment
-    # Handles if the user passes an external URL via env vars or automatically uses docker image
-    api_url = os.getenv("API_BASE_URL_FOR_ENV")
-    if api_url:
-        env = ApiSecurityRlEnv(base_url=api_url)
-    else:
-        env = ApiSecurityRlEnv.from_docker_image(IMAGE_NAME)
-
+    env = None
+    
     history: List[str] = []
     rewards: List[float] = []
     steps_taken = 0
@@ -151,6 +145,14 @@ async def main() -> None:
     log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
 
     try:
+        # Initialize Environment
+        # Handles if the user passes an external URL via env vars or automatically uses docker image
+        api_url = os.getenv("API_BASE_URL_FOR_ENV")
+        if api_url:
+            env = ApiSecurityRlEnv(base_url=api_url)
+        else:
+            env = await ApiSecurityRlEnv.from_docker_image(IMAGE_NAME)
+            
         result = env.reset(task_id=TASK_NAME)
         if inspect.isawaitable(result):
             result = await result
@@ -209,16 +211,18 @@ async def main() -> None:
         score = min(max(score, 0.0), 1.0)  # clamp to [0, 1]
         success = score >= SUCCESS_SCORE_THRESHOLD
 
+    except Exception as e:
+        print(f"[DEBUG] Unhandled exception in main loop: {e}", flush=True)
     finally:
-        try:
-            close_res = env.close()
-            if inspect.isawaitable(close_res):
-                await close_res
-        except Exception as e:
-            print(f"[DEBUG] env.close() error (container cleanup): {e}", flush=True)
+        if env is not None:
+            try:
+                close_res = env.close()
+                if inspect.isawaitable(close_res):
+                    await close_res
+            except Exception as e:
+                print(f"[DEBUG] env.close() error (container cleanup): {e}", flush=True)
             
         log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
