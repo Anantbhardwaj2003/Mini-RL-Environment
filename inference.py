@@ -8,17 +8,32 @@ import json
 import os
 import textwrap
 from typing import List, Optional, Dict, Any
-
+from dotenv import load_dotenv
 from openai import OpenAI
 
+load_dotenv()
 # Imports for custom environment and actions
 from client import ApiSecurityRlEnv
 from models import ApiSecurityRlAction
 
 # Environment Variable Configurations
-API_BASE_URL = os.getenv("API_BASE_URL")
-MODEL_NAME = os.getenv("MODEL_NAME")
+API_BASE_URL = os.getenv("API_BASE_URL","https://router.huggingface.co/v1")
+MODEL_NAME = os.getenv("MODEL_NAME","Qwen/Qwen3.5-9B")
 API_KEY = os.getenv("HF_TOKEN")
+
+# --- Safe Client Initialization ---
+client = None
+if API_KEY:
+    try:
+        client = OpenAI(
+            base_url=API_BASE_URL,
+            api_key=API_KEY
+        )
+    except Exception as e:
+        print(f"[DEBUG] Failed to initialize OpenAI client: {e}")
+        client = None
+else:
+    print("[WARNING] No API key found. Running in fallback mode (no LLM calls).")
 
 # For running locally via Docker image
 IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
@@ -94,7 +109,13 @@ def build_user_prompt(step: int, obs_dict: Dict[str, Any], history: List[str]) -
 
 
 def get_model_action(client: OpenAI, step: int, obs_dict: Dict[str, Any], history: List[str]) -> ApiSecurityRlAction:
+    
+    # ✅ Fallback if client not available
+    if client is None:
+        return ApiSecurityRlAction(method="GET", endpoint="/")
+
     user_prompt = build_user_prompt(step, obs_dict, history)
+
     try:
         completion = client.chat.completions.create(
             model=MODEL_NAME,
@@ -104,17 +125,17 @@ def get_model_action(client: OpenAI, step: int, obs_dict: Dict[str, Any], histor
             ],
             temperature=TEMPERATURE,
             max_tokens=MAX_TOKENS,
-            stream=False,
         )
+
         text = (completion.choices[0].message.content or "").strip()
-        
-        # Strip potential markdown formatting
+
+        # Clean markdown
         if text.startswith("```json"): text = text[7:]
         if text.startswith("```"): text = text[3:]
         if text.endswith("```"): text = text[:-3]
-            
+
         data = json.loads(text.strip())
-        
+
         return ApiSecurityRlAction(
             method=data.get("method", "GET").upper(),
             endpoint=data.get("endpoint", "/"),
@@ -122,18 +143,15 @@ def get_model_action(client: OpenAI, step: int, obs_dict: Dict[str, Any], histor
             params=data.get("params", {}),
             body=data.get("body", {})
         )
-    except Exception as exc:
-        print(f"[DEBUG] Model request failed or JSON parse error: {exc}", flush=True)
-        # Safe fallback action that just explores root
-        return ApiSecurityRlAction(method="GET", endpoint="/")
 
+    except Exception as exc:
+        print(f"[DEBUG] Model/JSON error: {exc}")
+        return ApiSecurityRlAction(method="GET", endpoint="/")
 
 import inspect
 import asyncio
 
 async def main() -> None:
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
-
     env = None
     
     history: List[str] = []
@@ -160,53 +178,79 @@ async def main() -> None:
         # Max steps config logic
         task_max_steps = result.observation.max_steps if getattr(result.observation, "max_steps", 0) > 0 else MAX_STEPS
 
-        for step in range(1, task_max_steps + 1):
-            if result and result.done:
-                break
+        with open("inference_report.md", "w", encoding="utf-8") as f:
+            f.write(f"# API Security RL Run Report\n\n**Task:** {TASK_NAME}\n**Model:** {MODEL_NAME}\n\n")
 
-            obs_dict = {
-                "status_code": result.observation.status_code,
-                "response_body": result.observation.response_body,
-                "hints": result.observation.hints,
-                "endpoints_discovered": result.observation.endpoints_discovered,
-                "vulnerabilities_found": result.observation.vulnerabilities_found,
-                "security_score": result.observation.security_score,
-            }
+            for step in range(1, task_max_steps + 1):
+                if result and result.done:
+                    break
 
-            action = await asyncio.to_thread(get_model_action, client, step, obs_dict, history)
-            
-            # Format action string cleanly for logging without line breaks
-            action_str = f"{action.method} {action.endpoint}".replace("\n", " ")
+                obs_dict = {
+                    "status_code": result.observation.status_code,
+                    "response_body": result.observation.response_body,
+                    "hints": result.observation.hints,
+                    "endpoints_discovered": result.observation.endpoints_discovered,
+                    "vulnerabilities_found": result.observation.vulnerabilities_found,
+                    "security_score": result.observation.security_score,
+                }
 
-            try:
-                result = env.step(action)
-                if inspect.isawaitable(result):
-                    result = await result
-                obs_dict["status_code"] = result.observation.status_code
-                reward = result.reward or 0.0
-                done = result.done
-                error = None
-            except Exception as e:
-                result = None
-                reward = 0.0
-                done = False
-                error = str(e).replace("\n", " ")
-                obs_dict["status_code"] = "ERROR"
-
-            steps_taken = step
-            rewards.append(reward)
-            if result and hasattr(result,"observation"):
-                score = getattr(result.observation, "security_score", 0.0)
-            else:
-                score = 0.0
+                action = await asyncio.to_thread(get_model_action, client, step, obs_dict, history)
                 
-            log_step(step=step, action=action_str, reward=reward, done=done, error=error)
+                # Format action string cleanly for logging without line breaks
+                action_str = f"{action.method} {action.endpoint}".replace("\n", " ")
 
-            history.append(f"Step {step}: {action_str} -> status {obs_dict['status_code']}, reward {reward:+.2f}")
+                try:
+                    result = env.step(action)
+                    if inspect.isawaitable(result):
+                        result = await result
+                    obs_dict["status_code"] = result.observation.status_code
+                    reward = result.reward or 0.0
+                    done = result.done
+                    error = None
+                    
+                    # Append strictly to the local report
+                    f.write(f"## Step {step}\n")
+                    f.write(f"**Request:** `{action.method} {action.endpoint}`\n")
+                    if action.headers: f.write(f"- Headers: `{action.headers}`\n")
+                    if action.body: f.write(f"- Body: `{action.body}`\n")
+                    
+                    f.write(f"**Response Status:** `{result.observation.status_code}`\n")
+                    
+                    # Safely handle potentially large or badly formatted body representation
+                    body_text = str(result.observation.response_body)
+                    if len(body_text) > 2000:
+                        body_text = body_text[:2000] + "\n...[TRUNCATED]"
+                        
+                    f.write(f"**Response Body:**\n```json\n{body_text}\n```\n")
+                    
+                    if result.observation.vulnerabilities_found:
+                        f.write(f"**Vulnerabilities Exploited:**\n")
+                        for v in result.observation.vulnerabilities_found:
+                            f.write(f"- `{v}`\n")
+                            
+                    f.write("\n---\n\n")
+                    f.flush()
+                except Exception as e:
+                    result = None
+                    reward = 0.0
+                    done = False
+                    error = str(e).replace("\n", " ")
+                    obs_dict["status_code"] = "ERROR"
 
-            if done:
-                break
-
+                steps_taken = step
+                rewards.append(reward)
+                if result and hasattr(result,"observation"):
+                    score = getattr(result.observation, "security_score", 0.0)
+                else:
+                    score = 0.0
+                    
+                log_step(step=step, action=action_str, reward=reward, done=done, error=error)
+    
+                history.append(f"Step {step}: {action_str} -> status {obs_dict['status_code']}, reward {reward:+.2f}")
+    
+                if done:
+                    break
+                    
         # Assuming goal success if max security score happens
         score = min(max(score, 0.0), 1.0)  # clamp to [0, 1]
         success = score >= SUCCESS_SCORE_THRESHOLD
