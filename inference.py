@@ -19,7 +19,7 @@ from models import ApiSecurityRlAction
 # Environment Variable Configurations
 API_BASE_URL = os.getenv("API_BASE_URL","https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME","Qwen/Qwen3.5-9B")
-API_KEY = os.getenv("HF_TOKEN")
+API_KEY = os.getenv("HF_TOKEN","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")
 
 # --- Safe Client Initialization ---
 client = None
@@ -36,9 +36,9 @@ else:
     print("[WARNING] No API key found. Running in fallback mode (no LLM calls).")
 
 # For running locally via Docker image
-IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
+IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME","api_security_rl-env:latest")
 
-TASK_NAME = os.getenv("API_SECURITY_TASK", "recon_easy")
+TASK_NAME = os.getenv("API_SECURITY_TASK", "exploit_medium")
 BENCHMARK = "api_security_rl"
 
 MAX_STEPS = 80
